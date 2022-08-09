@@ -1,0 +1,79 @@
+version: '3'
+
+services:
+  zookeeper:
+    image: 'wurstmeister/zookeeper:latest'
+    ports:
+      - '2181:2181'
+    restart: unless-stopped
+
+  kafka:
+    image: 'wurstmeister/kafka:latest'
+    ports:
+      - '9092:9092'
+    restart: unless-stopped
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_LISTENERS=PLAINTEXT://:9092
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+      - KAFKA_MESSAGE_MAX_BYTES=2000000
+      - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_AUTO_CREATE_TOPICS_ENABLE=true
+      - ALLOW_PLAINTEXT_LISTENER=yes
+    depends_on:
+      - zookeeper
+
+  postgres_db:
+    image: "postgres:latest"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    restart: always
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  flyway:
+    image: 'flyway/flyway'
+    command: -url=jdbc:postgresql://postgres_db:5432/${POSTGRES_DB} -user=${POSTGRES_USER} -password=${POSTGRES_PASSWORD} -connectRetries=5 migrate
+    volumes:
+      - ./migrations:/flyway/sql
+    depends_on:
+      - postgres_db
+
+  consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile.consumer
+    image: 'umalmyha/consumer'
+    environment:
+      - POSTGRES_URL=${POSTGRES_URL}
+      - KAFKA_BROKER_ADDR=${KAFKA_BROKER_ADDR}
+      - KAFKA_TOPIC=${KAFKA_TOPIC}
+      - KAFKA_TOPIC_PARTITION=${KAFKA_TOPIC_PARTITION}
+      - KAFKA_BATCH_MIN_BYTES=${KAFKA_BATCH_MIN_BYTES}
+      - KAFKA_BATCH_MAX_BYTES=${KAFKA_BATCH_MAX_BYTES}
+      - KAFKA_COMMIT_INTERVAL=${KAFKA_COMMIT_INTERVAL}
+    depends_on:
+      - flyway
+      - postgres_db
+      - kafka
+
+  producer:
+    build:
+      context: .
+      dockerfile: Dockerfile.producer
+    image: 'umalmyha/producer'
+    environment:
+      - KAFKA_BROKER_ADDR=${KAFKA_BROKER_ADDR}
+      - KAFKA_TOPIC=${KAFKA_TOPIC}
+      - KAFKA_TOPIC_PARTITION=${KAFKA_TOPIC_PARTITION}
+      - KAFKA_BATCH_SIZE=${KAFKA_BATCH_SIZE}
+    depends_on:
+      - kafka
+      - consumer
+
+volumes:
+  postgres_data:
